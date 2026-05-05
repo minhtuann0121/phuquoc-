@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 load_dotenv()
 
 #Đọc lại dữ liệu từ file
-with open("data/phuquoc.txt", "r", encoding="utf-8") as f:
+with open("data/PhuQuoc.txt", "r", encoding="utf-8") as f:
     phuquoc_data = f.read()
 SYSTEM_PROMPT = f"""LANGUAGE RULE - HIGHEST PRIORITY:
 - If user writes in English → YOU MUST reply in English. This is MANDATORY.
