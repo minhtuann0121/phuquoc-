@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-
+from sentence_transformers import SentenceTransformer
+import chromadb
 
 
 
@@ -15,6 +16,36 @@ load_dotenv()
 #Đọc lại dữ liệu từ file
 with open("data/PhuQuoc.txt", "r", encoding="utf-8") as f:
     phuquoc_data = f.read()
+print(f"✅ Đọc xong dữ liệu: {len(phuquoc_data)} ký tự")
+
+def split_chunks(text, chunk_size=200, overlap=30):
+    words = text.split()
+    chunks = []
+    i = 0
+    while i < len(words):
+        chunk = " ".join(words[i : i + chunk_size])
+        chunks.append(chunk)
+        i += chunk_size - overlap
+    return chunks
+
+print ("⏳ Đang load embedding model...")
+embedding_model = SentenceTransformer("intfloat/multilingual-e5-small")
+print ("✅ model sẵn sàng!")
+
+chunks = split_chunks(phuquoc_data)
+print(f"✅ Đã chia thành {len(chunks)} đoạn")
+
+chroma_client = chromadb.Client()
+collection = chroma_client.create_collection(name="phuquoc")
+
+embeddings = embedding_model.encode(chunks).tolist()
+collection.add(
+    documents=chunks,
+    embeddings=embeddings,
+    ids=[f"chunk_{i}" for i in range(len(chunks))]
+)
+print("✅ Vector DB sẵn sàng")
+
 SYSTEM_PROMPT = f"""LANGUAGE RULE - HIGHEST PRIORITY:
 - If user writes in English → YOU MUST reply in English. This is MANDATORY.
 - If user writes in Vietnamese → YOU MUST reply in Vietnamese. This is MANDATORY.
@@ -26,7 +57,6 @@ NGUYÊN TẮC BẮT BUỘC:
 1. Chỉ trả lời câu hỏi liên quan đến du lịch khu bắc đảo Phú Quốc
 2. Chỉ dùng thông tin từ DỮ LIỆU bên dưới, KHÔNG tự bịa thêm
 3. Nếu không có trong dữ liệu → trả lời: "Tôi chưa có thông tin này, bạn nên kiểm tra trực tiếp tại địa phương"
-4. Nếu không có trong dữ liệu → trả lời: "Tôi chưa có thông tin này, bạn nên kiểm tra trực tiếp tại địa phương"
 4b. Nếu câu hỏi HOÀN TOÀN không liên quan đến du lịch Phú Quốc (ví dụ: nấu ăn, toán học, lập trình, thời tiết nơi khác...) → PHẢI trả lời ĐÚNG câu này, KHÔNG được biến tấu: "Xin lỗi, tôi chỉ hỗ trợ thông tin du lịch khu bắc đảo Phú Quốc. Bạn có câu hỏi nào về Phú Quốc không?"
 TUYỆT ĐỐI KHÔNG được gắn câu hỏi ngoài luồng vào Phú Quốc.
 5. Trả lời bằng tiếng Việt, ngắn gọn dễ hiểu
@@ -76,13 +106,13 @@ NGUYÊN TẮC QUAN TÂM NHÓM YẾU THẾ:
         - Con số giá tiền (ví dụ: 200.000đ, 600k, miễn phí ...)
         - Giờ mở/ đóng cửa (ví dụ: 8h ,17h30 ...)
         - Số điện thoại
-    -> BẮT ĐƯỢC ghi: "Thấp - giá/giờ có thể thay đổi, nên kiểm tra lại trực tiếp"
+    -> BẮT BUỘC ghi: "Thấp - giá/giờ có thể thay đổi, nên kiểm tra lại trực tiếp"
     -> KHÔNG ĐƯỢC ghi CAO hoặc TRUNG BÌNH dù có bao nhiêu thông tin khác
 
     Chỉ khi KHÔNG có giá/giờ/SĐT mới dùng:
     -> "Cao" - có đầy đủ tên + địa chỉ + mô tả rõ ràng
     -> "Trung bình" -  chỉ có tên hoặc mô tả chung chung
-29. Nêu câu hỏi ngoài luồng -> KHÔNG thêm confidence tag
+29. Nếu câu hỏi ngoài luồng -> KHÔNG thêm confidence tag
 
 
 "Khi cung cấp địa chỉ cụ thể, LUÔN thêm câu: 
@@ -92,7 +122,7 @@ vì địa chỉ có thể đã thay đổi.'"
 DỮ LIỆU:
 {phuquoc_data}
 """
-print(phuquoc_data)
+
 
 app = FastAPI()
 
@@ -168,13 +198,13 @@ def detect_vulnerable_group(text: str) -> str:
     keyword_children = ["trẻ em", "con nhỏ", "bé", "em bé", "gia đình", "con tôi", "con mình", "đứa con", "con chúng tôi"]
     for kw in keyword_children:
         if kw in text_lower:
-            return "VULNERABLE_GROUP:  Người dùng đi cùng TRẺ EM. Ưu tiên địa điểm AN TOÀN, phù hợp trẻ nhỏ."
+            return "VULNERABLE_GROUP: Người dùng đi cùng TRẺ EM. Ưu tiên địa điểm AN TOÀN, phù hợp trẻ nhỏ."
         
     #Nhóm 2: Người cao tuổi
     keyword_elderly = ["người già","ba mẹ", "cha mẹ", "ông bà", "người cao tuổi", "lớn tuổi", "bố mẹ", "ông bà nội ngoại"]
     for kw in keyword_elderly:
         if kw in text_lower:
-            return "VULNERABLE_GROUP: Người dùng đi cùng người CAO TUỔI. Ưu tiên địa điểm DẼ ĐI LẠI, không leo trèo"
+            return "VULNERABLE_GROUP: Người dùng đi cùng người CAO TUỔI. Ưu tiên địa điểm DỄ ĐI LẠI, không leo trèo."
     
     #Nhóm 3: Người thu nhập thấp/ tiết kiệm
     keyword_budget = ["tiết kiệm", "rẻ", "ít tiền", "sinh viên", "bụi", "budget", "cheap", "thấp", "học sinh"]
@@ -182,7 +212,7 @@ def detect_vulnerable_group(text: str) -> str:
         if kw in text_lower:
             return "VULNERABLE_GROUP: Người dùng có ngân sách THẤP, ưu tiên lựa chọn GIÁ RẺ NHẤT."
     #Nhóm 4: Người khuyết tật
-    keyword_disability = ["Xe lăn", "khuyết tật", "đi lại khó", "tàn tật", "wheelchair"]
+    keyword_disability = ["xe lăn", "khuyết tật", "đi lại khó", "tàn tật", "wheelchair"]
     for kw in keyword_disability:
         if kw in text_lower:
             return "VULNERABLE_GROUP: Người dùng có người KHÓ KHĂN VẬN ĐỘNG. Ưu tiên địa điểm có LỐI ĐI BẰNG PHẲNG."
@@ -209,7 +239,7 @@ def chat(message: Message):
 
     #Dòng này ép chatbot phải chat đúng ngôn ngữ người gửi
     # Nếu phát hiện nhóm yếu thế thì báo cho AI
-    if  vulnerable_note:
+    if vulnerable_note:
         user_message = f"{message.text}\n\n[{vulnerable_note}]\n\n(IMPORTANT: Reply in the SAME language as my message. Do NOT mention what language you detected.)"
     else:
         user_message = f"{message.text}\n\n(IMPORTANT: Reply in the SAME language as my message. Do NOT mention what language you detected.)"   
