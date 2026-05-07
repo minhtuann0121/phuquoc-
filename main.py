@@ -29,7 +29,7 @@ def split_chunks(text, chunk_size=200, overlap=30):
     return chunks
 
 print ("⏳ Đang load embedding model...")
-embedding_model = SentenceTransformer("intfloat/multilingual-e5-small")
+embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
 print ("✅ model sẵn sàng!")
 
 chunks = split_chunks(phuquoc_data)
